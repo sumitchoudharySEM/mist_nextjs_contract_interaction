@@ -19,6 +19,7 @@ export default function Home() {
   const [error, setError] = useState(null);
   const [globalStatePDA, setGlobalStatePDA] = useState(null);
   const [totalRooms, setTotalRooms] = useState(null);
+  const [isGlobalStateInitialized, setIsGlobalStateInitialized] = useState(false);
 
   useEffect(() => {
     const [pda] = PublicKey.findProgramAddressSync(
@@ -35,8 +36,20 @@ export default function Home() {
     return program;
   };
 
-  const fetchTotalRooms = async () => {
+  const checkGlobalStateInitialized = async () => {
     if (!globalStatePDA) return;
+
+    try {
+      const program = getProgram();
+      const accountInfo = await connection.getAccountInfo(globalStatePDA);
+      setIsGlobalStateInitialized(accountInfo !== null);
+    } catch (err) {
+      console.error("Error checking global state:", err);
+    }
+  };
+
+  const fetchTotalRooms = async () => {
+    if (!globalStatePDA || !isGlobalStateInitialized) return;
 
     try {
       const program = getProgram();
@@ -50,13 +63,24 @@ export default function Home() {
 
   useEffect(() => {
     if (wallet.connected && globalStatePDA) {
-      fetchTotalRooms();
+      checkGlobalStateInitialized();
     }
   }, [wallet.connected, globalStatePDA]);
+
+  useEffect(() => {
+    if (isGlobalStateInitialized) {
+      fetchTotalRooms();
+    }
+  }, [isGlobalStateInitialized]);
 
   const createRoom = async () => {
     if (!wallet.publicKey) {
       setError("Please connect your wallet first.");
+      return;
+    }
+
+    if (!isGlobalStateInitialized) {
+      setError("Please initialize the global state first.");
       return;
     }
 
@@ -66,18 +90,17 @@ export default function Home() {
     try {
       const program = getProgram();
       
-      // Fetch the current total_rooms count
       const globalState = await program.account.globalState.fetch(globalStatePDA);
-      const newRoomId = globalState.totalRooms.addn(1);
-
+      const currentRoomId = globalState.totalRooms; // Use the current total_rooms without adding 1
+  
       const [roomPDA] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("room"),
-          newRoomId.toArrayLike(Buffer, "le", 8)
+          currentRoomId.toArrayLike(Buffer, "le", 8)
         ],
         program.programId
       );
-
+  
       const tx = await program.methods
         .createRoom()
         .accounts({
@@ -87,11 +110,10 @@ export default function Home() {
           systemProgram: SystemProgram.programId,
         })
         .rpc();
-
+  
       console.log("Transaction signature:", tx);
       setRoomPubkey(roomPDA.toString());
       
-      // Refresh the total rooms count
       await fetchTotalRooms();
     } catch (err) {
       console.error("Error creating room:", err);
@@ -123,6 +145,7 @@ export default function Home() {
         .rpc();
 
       console.log("Global state initialized. Transaction signature:", tx);
+      setIsGlobalStateInitialized(true);
       await fetchTotalRooms();
     } catch (err) {
       console.error("Error initializing global state:", err);
@@ -138,17 +161,26 @@ export default function Home() {
       <WalletMultiButton />
       {wallet.connected && (
         <div>
-          <button onClick={initializeGlobalState} disabled={loading}>
-            Initialize Global State
-          </button>
-          <button onClick={createRoom} disabled={loading}>
-            {loading ? "Creating Room..." : "Create Room"}
-          </button>
-          <button onClick={fetchTotalRooms} disabled={loading}>
-            Refresh Total Rooms
-          </button>
-          {totalRooms !== null && <p>Total Rooms Created: {totalRooms}</p>}
-          {roomPubkey && <p>Room created! PubKey: {roomPubkey}</p>}
+          {!isGlobalStateInitialized && (
+            <div>
+              <p>Global state is not initialized. You can initialize it below:</p>
+              <button onClick={initializeGlobalState} disabled={loading}>
+                Initialize Global State
+              </button>
+            </div>
+          )}
+          
+          <div>
+            <button onClick={createRoom} disabled={loading || !isGlobalStateInitialized}>
+              {loading ? "Creating Room..." : "Create Room"}
+            </button>
+            <button onClick={fetchTotalRooms} disabled={loading || !isGlobalStateInitialized}>
+              Refresh Total Rooms
+            </button>
+            {totalRooms !== null && <p>Total Rooms Created: {totalRooms}</p>}
+            {roomPubkey && <p>Room created! PubKey: {roomPubkey}</p>}
+          </div>
+          
           {error && <p style={{ color: "red" }}>{error}</p>}
         </div>
       )}
