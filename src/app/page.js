@@ -20,6 +20,56 @@ export default function Home() {
   const [globalStatePDA, setGlobalStatePDA] = useState(null);
   const [totalRooms, setTotalRooms] = useState(null);
   const [isGlobalStateInitialized, setIsGlobalStateInitialized] = useState(false);
+  const [availableRooms, setAvailableRooms] = useState([]);
+  const [selectedRoom, setSelectedRoom] = useState("");
+
+  const fetchAvailableRooms = async () => {
+    if (!isGlobalStateInitialized) return;
+  
+    setLoading(true);
+    try {
+      const program = getProgram();
+      const globalState = await program.account.globalState.fetch(globalStatePDA);
+      const totalRoomsCount = globalState.totalRooms.toNumber();
+  
+      const rooms = [];
+      for (let i = 0; i < totalRoomsCount; i++) {
+        const [roomPDA] = PublicKey.findProgramAddressSync(
+          [Buffer.from("room"), new anchor.BN(i).toArrayLike(Buffer, "le", 8)],
+          program.programId
+        );
+
+        console.log(`Fetching room ${i+1} at ${roomPDA.toString()}`);
+  
+        try {
+          const roomAccount = await program.account.room.fetch(roomPDA);
+          // if (roomAccount.state === 0) { // Assuming 0 is the 'Init' state in your enum
+            rooms.push({ id: i+1, pubkey: roomPDA.toString() });
+          // }
+        } catch (err) {
+          if (err.message.includes("Account does not exist")) {
+            console.log(`Room ${i} does not exist, skipping.`);
+          } else {
+            console.error(`Error fetching room ${i}:`, err);
+          }
+        }
+      }
+  
+      setAvailableRooms(rooms);
+      console.log(`Found ${rooms.length} available rooms.`);
+    } catch (err) {
+      console.error("Error fetching available rooms:", err);
+      setError("Failed to fetch available rooms");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isGlobalStateInitialized) {
+      fetchAvailableRooms();
+    }
+  }, [isGlobalStateInitialized]);
 
   useEffect(() => {
     const [pda] = PublicKey.findProgramAddressSync(
@@ -115,9 +165,48 @@ export default function Home() {
       setRoomPubkey(roomPDA.toString());
       
       await fetchTotalRooms();
+      await fetchAvailableRooms();
     } catch (err) {
       console.error("Error creating room:", err);
       setError(`Error creating room: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const joinRoom = async () => {
+    if (!wallet.publicKey) {
+      setError("Please connect your wallet first.");
+      return;
+    }
+
+    if (!selectedRoom) {
+      setError("Please select a room to join.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const program = getProgram();
+      
+      const tx = await program.methods
+        .joinRoom()
+        .accounts({
+          room: new PublicKey(selectedRoom),
+          player: wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      console.log("Joined room. Transaction signature:", tx);
+      setRoomPubkey(selectedRoom);
+      
+      await fetchAvailableRooms(); // Refresh the room list
+    } catch (err) {
+      console.error("Error joining room:", err);
+      setError(`Error joining room: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -174,11 +263,30 @@ export default function Home() {
             <button onClick={createRoom} disabled={loading || !isGlobalStateInitialized}>
               {loading ? "Creating Room..." : "Create Room"}
             </button>
-            <button onClick={fetchTotalRooms} disabled={loading || !isGlobalStateInitialized}>
-              Refresh Total Rooms
+            <button onClick={fetchAvailableRooms} disabled={loading || !isGlobalStateInitialized}>
+              Refresh Available Rooms
             </button>
             {totalRooms !== null && <p>Total Rooms Created: {totalRooms}</p>}
-            {roomPubkey && <p>Room created! PubKey: {roomPubkey}</p>}
+            {roomPubkey && <p>Room created/joined! PubKey: {roomPubkey}</p>}
+          </div>
+          
+          <div>
+            <select
+              value={selectedRoom}
+              onChange={(e) => setSelectedRoom(e.target.value)}
+              disabled={loading || availableRooms.length === 0}
+              className="select-room"
+            >
+              <option value="">Select a room to join</option>
+              {availableRooms.map((room) => (
+                <option key={room.id} value={room.pubkey}>
+                  Room {room.id}, {room.pubkey}
+                </option>
+              ))}
+            </select>
+            <button onClick={joinRoom} disabled={loading || !selectedRoom}>
+              Join Selected Room
+            </button>
           </div>
           
           {error && <p style={{ color: "red" }}>{error}</p>}
