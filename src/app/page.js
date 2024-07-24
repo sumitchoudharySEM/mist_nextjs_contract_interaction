@@ -150,6 +150,11 @@ export default function Home() {
         ],
         program.programId
       );
+
+      console.log(`Creating room ${currentRoomId} at ${roomPDA}`);
+      console.log(`Global state at ${globalStatePDA}`);
+      console.log(`Creator wallet at ${wallet.publicKey}`);
+      console.log(`System program at ${SystemProgram.programId}`);
   
       const tx = await program.methods
         .createRoom()
@@ -160,6 +165,8 @@ export default function Home() {
           systemProgram: SystemProgram.programId,
         })
         .rpc();
+
+        console.log("Room created. Transaction signature:", tx);
   
       console.log("Transaction signature:", tx);
       setRoomPubkey(roomPDA.toString());
